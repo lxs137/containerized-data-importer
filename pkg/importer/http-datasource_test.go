@@ -33,6 +33,7 @@ var (
 	tinyCoreXz              = "tinyCore.iso.xz"
 	cirrosData, _           = readFile(cirrosFilePath)
 	diskimageArchiveData, _ = readFile(diskimageTarFileName)
+	tinyCoreData, _         = readFile(tinyCoreFilePath)
 )
 
 var _ = Describe("Http data source", func() {
@@ -83,7 +84,16 @@ var _ = Describe("Http data source", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
-	table.DescribeTable("calling info should", func(image string, contentType cdiv1.DataVolumeContentType, expectedPhase ProcessingPhase, want []byte, wantErr bool) {
+	table.DescribeTable("calling info should", func(image string, rejectHeadRequest bool, contentType cdiv1.DataVolumeContentType, expectedPhase ProcessingPhase, want []byte, wantErr bool) {
+		wrapServerWithMiddleware(ts.Config, func(hf http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if rejectHeadRequest && r.Method == "HEAD" {
+					w.WriteHeader(http.StatusForbidden)
+				} else {
+					hf.ServeHTTP(w, r)
+				}
+			}
+		})
 		flushRead = want
 		if image != "" {
 			image = ts.URL + "/" + image
@@ -103,9 +113,13 @@ var _ = Describe("Http data source", func() {
 			Expect(err).To(HaveOccurred())
 		}
 	},
-		table.Entry("return Convert phase ", cirrosFileName, cdiv1.DataVolumeKubeVirt, ProcessingPhaseConvert, cirrosData, false),
-		table.Entry("return TransferTarget with archive content type but not archive endpoint ", cirrosFileName, cdiv1.DataVolumeArchive, ProcessingPhaseTransferDataDir, cirrosData, false),
-		table.Entry("return TransferTarget with archive content type and archive endpoint ", diskimageTarFileName, cdiv1.DataVolumeArchive, ProcessingPhaseTransferDataDir, diskimageArchiveData, false),
+		table.Entry("return Convert phase ", cirrosFileName, false, cdiv1.DataVolumeKubeVirt, ProcessingPhaseConvert, cirrosData, false),
+		table.Entry("return TransferTarget with archive content type but not archive endpoint ", cirrosFileName, false, cdiv1.DataVolumeArchive, ProcessingPhaseTransferDataDir, cirrosData, false),
+		table.Entry("return TransferTarget with archive content type and archive endpoint ", diskimageTarFileName, false, cdiv1.DataVolumeArchive, ProcessingPhaseTransferDataDir, diskimageArchiveData, false),
+		table.Entry("return Convert with qcow2 image", cirrosFileName, false, cdiv1.DataVolumeKubeVirt, ProcessingPhaseConvert, cirrosData, false),
+		table.Entry("return TransferScratch with qcow2 image but HEAD is rejected ", cirrosFileName, true, cdiv1.DataVolumeKubeVirt, ProcessingPhaseTransferScratch, cirrosData, false),
+		table.Entry("return Convert with iso image", tinyCoreFileName, false, cdiv1.DataVolumeKubeVirt, ProcessingPhaseConvert, tinyCoreData, false),
+		table.Entry("return TransferScratch with iso image but HEAD is rejected ", tinyCoreFileName, true, cdiv1.DataVolumeKubeVirt, ProcessingPhaseTransferDataFile, tinyCoreData, false),
 	)
 
 	It("calling info with raw gz image should return TransferDataFile", func() {
@@ -438,6 +452,11 @@ var _ = Describe("http pollprogress", func() {
 
 func createTestServer(imageDir string) *httptest.Server {
 	return httptest.NewServer(http.FileServer(http.Dir(imageDir)))
+}
+
+func wrapServerWithMiddleware(server *http.Server, middleware func(http.HandlerFunc) http.HandlerFunc) {
+	rawHandler := server.Handler
+	server.Handler = middleware(rawHandler.ServeHTTP)
 }
 
 // Read the contents of the file into a byte array, don't use this on really huge files.

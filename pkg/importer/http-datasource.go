@@ -130,12 +130,10 @@ func (hs *HTTPDataSource) Info() (ProcessingPhase, error) {
 	if hs.contentType == cdiv1.DataVolumeArchive {
 		return ProcessingPhaseTransferDataDir, nil
 	}
-	if hs.readers.Convert {
-		if hs.brokenForQemuImg || hs.readers.Archived || hs.customCA != "" {
+	if hs.brokenForQemuImg || hs.readers.Archived || hs.customCA != "" {
+		if hs.readers.Convert {
 			return ProcessingPhaseTransferScratch, nil
-		}
-	} else {
-		if hs.readers.Archived || hs.customCA != "" {
+		} else {
 			return ProcessingPhaseTransferDataFile, nil
 		}
 	}
